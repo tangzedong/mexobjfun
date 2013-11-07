@@ -14,7 +14,7 @@
  */
 double sum(const mxArray *A);
 double avg(const mxArray *A);
-double var(const mxArray *A,size_t i,size_t j);    /*计算方差函数*/
+double var(const mxArray *A,const mxArray *u,size_t i,size_t j);    /*计算方差函数*/
 double min(double a,double b);    /*取最小值*/
 void readmat(mxArray **img);    /*读取图像*/
 void
@@ -42,7 +42,7 @@ mexFunction( int nlhs, mxArray *plhs[],
      * evaluate any left-hand arguments except 'ans'
      */
 	/*读取img矩阵*/
-    const int dbon=1;
+    const int dbon=0;
 	 mxArray *img;
 	 readmat(&img);
      
@@ -66,9 +66,10 @@ mexFunction( int nlhs, mxArray *plhs[],
         printf("Pass p3");
      
 	 mxArray *u2=mxCreateDoubleMatrix(1,mxGetN(u),mxREAL);
-	 mxArray *c1=mxCreateDoubleMatrix(m,m,mxREAL);
+	 mxArray *c1=mxCreateDoubleMatrix(m,n,mxREAL);
 	 mxArray *c2=mxCreateDoubleMatrix(m,n,mxREAL);
-	 double *pu=mxGetPr(u2);
+	 double *pu=mxGetPr(u);
+     double *pu2=mxGetPr(u2);
      double *pc1=mxGetPr(c1);
      double *pc2=mxGetPr(c2);
      
@@ -83,31 +84,57 @@ mexFunction( int nlhs, mxArray *plhs[],
 	 {
 		 for(size_t j=1;j<n-1;j++)
 		 {
-			 *(pc1+j*m+i)=var(img,i,j);
+			 *(pc1+j*m+i)=var(img,u,i,j);
 		 }
 	 }
+     
+     for(int i=0;i<m;i++)
+     {
+         *(pc1+i)=*(pc1+m+i);
+         *(pc1+(n-1)*m+i)=*(pc1+(n-2)*m+i);
+     }
+     for(int i=0;i<n;i++)
+     {
+         *(pc1+i*m)=*(pc1+i*m+1);
+         *(pc1+i*m+m-1)=*(pc1+i*m+m-2);
+     }
      
      //u~=1-u
 	 for(int i=0;i<m;i++)
 	 {
 		 for(int j=0;j<n;j++)
 		 {
-			 *(pu+i+j*m)=1-*(pu+i+j*m);
+			 *(pu2+i+j*m)=1-*(pu+i+j*m);
 		 }
 	 }
-     
+
      //计算第二类C矩阵
 	 for(size_t i=1;i<m-1;i++)
 	 {
 		 for(size_t j=1;j<n-1;j++)
 		 {
-			 *(pc2+j*m+i)=var(img,i,j);
+			 *(pc2+j*m+i)=var(img,u2,i,j);
 		 }
 	 }
      
+     for(int i=0;i<m;i++)
+     {
+         *(pc2+i)=*(pc2+m+i);
+         *(pc2+(n-1)*m+i)=*(pc2+(n-2)*m+i);
+     }
+     for(int i=0;i<n;i++)
+     {
+         *(pc2+i*m)=*(pc2+i*m+1);
+         *(pc2+i*m+m-1)=*(pc2+i*m+m-2);
+     }
+
           if(dbon==1)
         printf("Pass p5");
+     
+     /*计算G矩阵*/
+     
 	/*计算J函数值*/
+     
 	/*用户空间清理*/
 	//mxDestoryArray(c1);
 	//mxDestoryArray(c2);
@@ -115,6 +142,8 @@ mexFunction( int nlhs, mxArray *plhs[],
      //free(c2);
      plhs[0]=c1;
      plhs[1]=c2;
+     plhs[2]=(mxArray *)u;
+     plhs[3]=u2;
   }
 }
 
@@ -168,30 +197,56 @@ double avg(const mxArray *A)
 	return sum(A)/(m*n);
 }
 
-double var(const mxArray *A,size_t i,size_t j)
+double var(const mxArray *A,const mxArray *u,size_t i,size_t j)
 {
-	mxArray *loc = mxCreateDoubleMatrix(3,3,mxREAL);
+	mxArray *loc = mxCreateDoubleMatrix(9,1,mxREAL);
 	double *ploc = mxGetPr(loc);
-	size_t ml=mxGetM(loc),nl=mxGetN(loc);
+    double *pu = mxGetPr(u);
+	//size_t ml=mxGetM(loc),nl=mxGetN(loc);
 	double *pimg = mxGetPr(A);
+    double sum=0;
+    int n=0;
 	size_t mi=mxGetM(A),ni=mxGetN(A);
 
+    for(size_t x=0;x<9;x++)
+            *(ploc+x)=0;
+            
 	for(size_t x=i-1;x<=i+1;x++)
 	{
 		for(size_t y=j-1;y<=j+1;y++)
 		{
-			*(ploc+(x-i+1)+(y-j+1)*ml)=*(pimg+x+y*mi);
+            if(*(pu+x+y*mi)>0.5)
+            {
+                *(ploc+(x-i+1)+(y-j+1)*3)=*(pimg+x+y*mi);
+                sum+=*(pimg+x+y*mi);
+                n++;
+            }
 		}
 	}
 
-	double a=avg(loc);
-
+	//double a=avg(loc);
+    if(n == 0)
+    {
+        mxDestroyArray(loc);
+        return 0;
+    }
+    
+    double a=sum/n;
+    
+    sum = 0;
 	for(size_t x=0;x<3;x++)
+    {
 		for(size_t y=0;y<3;y++)
-			*(ploc+x+y*ml)=(*(ploc+x+y*ml)-a)*(*(ploc+x+y*ml)-a);
-
-	double s = sum(loc);
+        {
+            if(*(pu+x+y*mi)>0.5)
+            {
+                sum+=(*(ploc+x+y*3)-a)*(*(ploc+x+y*3)-a);
+            }
+        }
+    }
+    
+	//double s = sum(loc);
 	mxDestroyArray(loc);
 
-	return s/(a*a);
+	return sum/(a*a);
 }
